@@ -1,91 +1,70 @@
-from pedido import Pedido
 from gestor import GestorPedidos
 from inventario import Inventario
+from pedido import Pedido
 import multiprocessing
 
-# Función para procesar pedidos
-def procesar_pedidos(gestor_pedidos, inventario, barrier, lock):
-    pedidos_no_procesados = []
 
-    while not gestor_pedidos.pedidos_queue.empty():
-        pedido = gestor_pedidos.pedidos_queue.get()
-        pedido.estado = "en preparación"
-        pedido.imprimir_estado()
-
-        puede_procesarse = True
-        with lock:  # Bloqueo para proteger actualizaciones concurrentes
-            for item, cantidad in pedido.items.items():
-                if not inventario.actualizar_inventario(item, cantidad):
-                    print(f"No se pudo procesar el pedido {pedido.pedido_id}. Falta de stock para {item}.")
-                    puede_procesarse = False
-                    break
-
-        if puede_procesarse:
-            pedido.estado = "completado"
-        else:
-            pedido.estado = "no procesado"
-            pedidos_no_procesados.append(pedido)
-
-        pedido.imprimir_estado()
-
-        # Mostrar inventario actualizado después de procesar cada pedido
-        print("\nInventario Actualizado:")
-        with lock:  # Bloqueo para acceso seguro al inventario
-            for item, cantidad in inventario.consultar_inventario().items():
-                print(f"{item}: {cantidad} disponibles")
-
-        # Sincronización para que todos los procesos lleguen aquí antes de continuar
-        barrier.wait()
-
-    # Mostrar pedidos no procesados
-    print("\nPedidos no procesados:")
-    for pedido in pedidos_no_procesados:
-        print(f"Pedido {pedido.pedido_id}: {pedido.items}")
-
-# Función para generar pedidos predefinidos
 def generar_pedidos(gestor_pedidos):
-    pedidos_predefinidos = [
+    """
+    Genera un conjunto de pedidos simulados y los envía al gestor.
+    """
+    pedidos_simulados = [
         {"pizza": 5, "hamburguesa": 2},
         {"hamburguesa": 5, "soda": 5},
         {"pizza": 3, "soda": 10},
+        {"pizza": 5, "soda": 5},
     ]
 
-    for pedido_id, items in enumerate(pedidos_predefinidos, start=1):
+    for pedido_id, items in enumerate(pedidos_simulados, start=1):
         pedido = Pedido(pedido_id, items)
         gestor_pedidos.recibir_pedido(pedido)
 
-# Flujo principal
+    # Señal para indicar que no hay más pedidos
+    gestor_pedidos.recibir_pedido(None)
+
+
 def flujo_principal():
+    manager = multiprocessing.Manager()
     stock_inicial = {"pizza": 10, "hamburguesa": 15, "soda": 20}
     inventario = Inventario(stock_inicial)
-    gestor_pedidos = GestorPedidos()
-    barrier = multiprocessing.Barrier(2)  # Sincronizar 2 procesos
-    lock = multiprocessing.Lock()  # Bloqueo para sincronización de datos
+    pedidos_queue = multiprocessing.Queue()
+    lock = multiprocessing.Lock()
+
+    # Estructura para el reporte final (usando Manager)
+    reporte = manager.dict({
+        "completados": manager.list(),
+        "no_procesados": manager.list(),
+    })
 
     # Mostrar inventario inicial
-    print("Inventario Inicial:")
+    print("Inventario inicial:")
     for item, cantidad in inventario.consultar_inventario().items():
         print(f"{item}: {cantidad} disponibles")
 
-    # Crear procesos
-    procesos = []
-    procesos.append(multiprocessing.Process(target=procesar_pedidos, args=(gestor_pedidos, inventario, barrier, lock)))
+    # Crear el proceso de GestorPedidos
+    gestor_pedidos = GestorPedidos(pedidos_queue, inventario, lock, reporte)
+    gestor_pedidos.start()
 
-    # Generar pedidos
+    # Generar pedidos en el flujo principal
     generar_pedidos(gestor_pedidos)
 
-    # Iniciar procesos
-    for proceso in procesos:
-        proceso.start()
+    # Esperar a que el gestor termine
+    gestor_pedidos.join()
 
-    # Sincronizar procesos
-    for proceso in procesos:
-        proceso.join()
+    # Mostrar reporte final
+    print("\nReporte Final:")
+    print("Pedidos completados exitosamente:")
+    for pedido in reporte["completados"]:
+        print(f"Pedido {pedido.pedido_id}: {pedido.items}")
 
-    # Mostrar inventario final
+    print("\nPedidos no procesados por falta de inventario:")
+    for pedido in reporte["no_procesados"]:
+        print(f"Pedido {pedido.pedido_id}: {pedido.items}")
+
     print("\nEstado final del inventario:")
     for item, cantidad in inventario.consultar_inventario().items():
         print(f"{item}: {cantidad} disponibles")
+
 
 if __name__ == "__main__":
     flujo_principal()
