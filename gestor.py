@@ -4,9 +4,6 @@ from pedido import Pedido
 
 class GestorPedidos(multiprocessing.Process):
     def __init__(self, pedidos_queue, inventario, lock, reporte):
-        """
-        Clase que gestiona la recepción y procesamiento de pedidos.
-        """
         super().__init__()
         self.pedidos_queue = pedidos_queue
         self.inventario = inventario
@@ -14,17 +11,11 @@ class GestorPedidos(multiprocessing.Process):
         self.reporte = reporte
 
     def recibir_pedido(self, pedido):
-        """
-        Agrega un pedido a la cola.
-        """
         if pedido is not None:
             print(f"Pedido {pedido.pedido_id} registrado con los ítems: {pedido.items}")
         self.pedidos_queue.put(pedido)
 
     def procesar_pedido(self):
-        """
-        Extrae un pedido de la cola, lo marca como "en preparación" y actualiza el inventario.
-        """
         while True:
             pedido = self.pedidos_queue.get()
             if pedido is None:
@@ -56,7 +47,4 @@ class GestorPedidos(multiprocessing.Process):
                 print(f"{item}: {cantidad} disponibles")
 
     def run(self):
-        """
-        Procesa los pedidos recibidos en la cola.
-        """
         self.procesar_pedido()

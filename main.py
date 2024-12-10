@@ -5,9 +5,6 @@ import multiprocessing
 
 
 def generar_pedidos(gestor_pedidos):
-    """
-    Genera un conjunto de pedidos simulados y los envía al gestor.
-    """
     pedidos_simulados = [
         {"pizza": 5, "hamburguesa": 2},
         {"hamburguesa": 5, "soda": 5},
