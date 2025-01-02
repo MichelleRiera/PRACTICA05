@@ -1,0 +1,2 @@
+mpi4py
+psycopg2-binary
