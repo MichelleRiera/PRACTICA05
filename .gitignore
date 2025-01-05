@@ -1,0 +1,2 @@
+# Ignorar cualquier carpeta __pycache__ que se encuentre en cualquier parte del proyecto
+__pycache__/
