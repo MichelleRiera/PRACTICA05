@@ -3,7 +3,7 @@ from pedido import Pedido
 from gestor import GestorPedidos
 from inventario import Inventario
 import random
-import json  # Por si quieres manipular el string JSON de items.
+import json  # Por si quieres manipular (load/dump) el string JSON de items.
 
 def generar_pedidos(num_pedidos=5):
     """Genera una lista de objetos Pedido con ítems aleatorios."""
@@ -25,137 +25,158 @@ def main():
 
     # =============== RANK 0 ===============
     if rank == 0:
-        # Nodo 0: Maestro. Centraliza parte de la impresión (logs) y lanza los pedidos.
+        # Nodo 0 (Maestro): Genera pedidos, centraliza la impresión y lanza el reporte final
         gestor = GestorPedidos()
 
-        # Generar pedidos y mostrarlos en pantalla
-        pedidos = generar_pedidos(num_pedidos=5)
-
-        print("Inventario inicial (referencia local; si deseas, puedes consultarlo a rank=2)\n"
-              "pizza: 50 disponibles\n"
-              "hamburguesa: 40 disponibles\n"
-              "soda: 60 disponibles\n"
-              "papas: 30 disponibles\n"
-              "ensalada: 25 disponibles\n")
-
+        # Generar pedidos y listarlos en pantalla
+        pedidos = generar_pedidos(num_pedidos=30)
+        print("\n=== [RANK 0] GENERANDO PEDIDOS ===\n")
         for pedido in pedidos:
-            print(f"Pedido {pedido.pedido_id} registrado con los ítems: {pedido.items}")
+            print(f"Pedido {pedido.pedido_id} con ítems: {pedido.items}")
 
-        # Enviar pedidos a rank=1 de a uno
+        # Enviar pedidos uno a uno al nodo 1
         for pedido in pedidos:
             comm.send(pedido, dest=1, tag=11)
-
-            # Recibir de rank=1 la "respuesta" (lista de cadenas) para imprimir
+            # Recibir logs de rank=1 para imprimir en orden
             respuesta = comm.recv(source=1, tag=12)
             for linea in respuesta:
                 print(linea)
 
-        # Enviamos None a rank=1 para indicar fin
+        # Indicar fin de pedidos a rank=1
         comm.send(None, dest=1, tag=11)
-        # Esperamos confirmación de rank=1
+        # Esperar confirmación
         comm.recv(source=1, tag=12)
 
-        # ==== REPORTE FINAL ====
-        print("\nReporte Final:")
-        # 1) Consultamos pedidos a la BD (que se ejecuta en rank=2)
-        todos_pedidos = gestor.consultar_pedidos_db()
-        # 2) Consultamos inventario final a la BD
-        inventario_final = gestor.consultar_inventario_db()
+        # ======= REPORTE FINAL =======
+        print("\n=== REPORTE FINAL ===")
+        # 1) Consultar pedidos en la BD (rank=2)
+        pedidos_db = gestor.consultar_pedidos_db()
+        # 2) Consultar inventario final en la BD
+        inventario_db = gestor.consultar_inventario_db()
 
-        # Filtrar por estado
-        completados = [p for p in todos_pedidos if p[2] == "completado"]
-        no_procesados = [p for p in todos_pedidos if p[2] == "no procesado"]
+        # Filtrar pedidos por estado
+        completados = [p for p in pedidos_db if p[2] == "completado"]
+        parciales   = [p for p in pedidos_db if p[2] == "parcial"]
+        no_proc     = [p for p in pedidos_db if p[2] == "no procesado"]
 
-        # Imprimir reporte
-        print("Pedidos completados exitosamente:")
+        # Mostrar
+        print("\nPedidos completados:")
         for p in completados:
             pedido_id = p[0]
-            items_str = p[1]  # es un JSON string. Si quieres, puedes parsearlo con json.loads(p[1])
-            print(f"Pedido {pedido_id}: {items_str}")
+            items_str = p[1]
+            print(f"  Pedido {pedido_id}: {items_str}")
 
-        print("\nPedidos no procesados por falta de inventario:")
-        for p in no_procesados:
+        print("\nPedidos procesados parcialmente:")
+        for p in parciales:
             pedido_id = p[0]
             items_str = p[1]
-            print(f"Pedido {pedido_id}: {items_str}")
+            print(f"  Pedido {pedido_id}: {items_str}")
 
-        print("\nEstado final del inventario:")
-        for item, stock in inventario_final.items():
-            print(f"{item}: {stock} disponibles")
+        print("\nPedidos no procesados (ningún ítem):")
+        for p in no_proc:
+            pedido_id = p[0]
+            items_str = p[1]
+            print(f"  Pedido {pedido_id}: {items_str}")
 
-        # Enviar None a rank=2 para que termine su bucle (si lo deseas)
+        print("\n=== Inventario final en la BD ===")
+        for item, stock in inventario_db.items():
+            print(f"  {item}: {stock} disponibles")
+
+        # Enviar None a rank=2 para terminar
         comm.send(None, dest=2, tag=45)
 
     # =============== RANK 1 ===============
     elif rank == 1:
-        # Nodo 1: Procesa pedidos. Devuelve logs a rank=0 para orden en la salida.
-        inventario_local = Inventario({
-            "pizza": 5,          # <-- Ajusta a tu gusto
-            "hamburguesa": 40,
-            "soda": 60,
-            "papas": 30,
-            "ensalada": 25
-        })
+        # Nodo 1 (Preparación): 
+        # 1) Solicita el inventario inicial al nodo 2
+        # 2) Procesa cada pedido (posible procesamiento parcial)
+        # 3) Envía logs a rank=0 y actualizaciones a rank=2
+
+        # Pedir el inventario inicial a rank=2
+        comm.send({"action": "CONSULTAR_INVENTARIO"}, dest=2, tag=23)
+        inventario_bd = comm.recv(source=2, tag=23)
+
+        # Cargar el inventario local con lo que devolvió la BD
+        inventario_local = Inventario(inventario_bd)
+        
+        # Enviar a rank=0 un log con el inventario inicial cargado
+        logs_inicio = ["\n=== [RANK 1] INVENTARIO LOCAL CARGADO DESDE BD ==="]
+        for it, st in inventario_local.stock.items():
+            logs_inicio.append(f"  {it}: {st} disponibles")
+        comm.send(logs_inicio, dest=0, tag=12)
 
         while True:
             pedido = comm.recv(source=0, tag=11)
             if pedido is None:
-                # Enviamos confirmación a rank=0 de que terminamos
+                # Enviamos confirmación a rank=0 de que no hay más pedidos
                 comm.send("done", dest=0, tag=12)
                 break
 
-            # Esta lista "logs" contendrá los mensajes que rank=0 imprimirá
+            # Aquí guardamos los mensajes para rank=0
             logs = []
+            logs.append(f"\n=== Procesando Pedido {pedido.pedido_id} ===")
+            logs.append(f"Pedido {pedido.pedido_id}: Estado actual -> en preparación")
 
-            # Marcamos "en preparación"
-            logs.append(f"\nPedido {pedido.pedido_id}: Estado actual -> en preparación")
+            # Diccionarios para registrar qué ítems se procesan y cuáles no
+            procesados     = {}
+            no_procesados  = {}
 
-            procesado_completamente = True
-            for item, cantidad in pedido.items.items():
-                if not inventario_local.actualizar_inventario_local(item, cantidad):
-                    procesado_completamente = False
-                    logs.append(f"No se pudo procesar el pedido {pedido.pedido_id}. Falta de stock para '{item}'.")
-                    pedido.estado = "no procesado"
-                    break
+            for item, cant in pedido.items.items():
+                stock_actual = inventario_local.stock.get(item, 0)
+                if stock_actual >= cant:
+                    # Sí hay suficiente stock -> procesar
+                    inventario_local.stock[item] = stock_actual - cant
+                    procesados[item] = cant
+                else:
+                    # No hay stock suficiente -> no procesar ese ítem
+                    no_procesados[item] = cant
 
-            if procesado_completamente:
+            # Determinar estado del pedido
+            if len(procesados) == 0:
+                # Ningún ítem pudo procesarse
+                pedido.estado = "no procesado"
+                logs.append(f"Ningún ítem pudo procesarse en Pedido {pedido.pedido_id}.")
+            elif len(procesados) == len(pedido.items):
+                # Todos los ítems se procesaron
                 pedido.estado = "completado"
                 logs.append(f"Pedido {pedido.pedido_id}: Estado actual -> completado")
-                # Notificar a la BD (rank=2) de la disminución de inventario
-                for it, cant in pedido.items.items():
-                    inventario_local.notificar_actualizacion_db(it, cant)
             else:
-                logs.append(f"Pedido {pedido.pedido_id}: Estado actual -> no procesado")
+                # Se procesaron algunos ítems y otros no
+                pedido.estado = "parcial"
+                logs.append(f"Pedido {pedido.pedido_id}: Estado actual -> parcial")
+                logs.append(f"Ítems sin stock: {no_procesados}")
 
-            # Mostrar inventario local tras atender este pedido
-            inv_str = "\nInventario actualizado:\n"
+            # Notificar a la BD solo de los ítems efectivamente procesados
+            if len(procesados) > 0:
+                for it, cantidad_procesada in procesados.items():
+                    inventario_local.notificar_actualizacion_db(it, cantidad_procesada)
+
+            # Construir string del inventario local actualizado
+            inv_str = "\nInventario local actualizado:\n"
             for it, st in inventario_local.stock.items():
                 inv_str += f"  {it}: {st} disponibles\n"
             logs.append(inv_str)
 
-            # Registrar el pedido en la BD (rank=2)
+            # Registrar el pedido (sea completo, parcial o no procesado) en la BD
             comm.send({
                 "action": "REGISTRAR_PEDIDO",
                 "data": {
                     "pedido_id": pedido.pedido_id,
-                    "items": pedido.items,
+                    "items": pedido.items,   # ítems originales
                     "estado": pedido.estado
                 }
             }, dest=2, tag=44)
 
-            # Finalmente, enviamos a rank=0 los "logs" para ser impresos
+            # Enviar los logs a rank=0
             comm.send(logs, dest=0, tag=12)
 
     # =============== RANK 2 ===============
     elif rank == 2:
-        # Solo aquí importamos psycopg2 y db_manager
         import psycopg2
         from db_manager import DatabaseManager
 
         db = DatabaseManager(db_name="pedidos", user="postgres", password="123", host="localhost", port=5432)
         db.connect()
-
-        # Limpiamos las tablas (opcional, si quieres reiniciar)
         db.limpiar_tablas()
 
         inventario_inicial = {
@@ -168,24 +189,34 @@ def main():
         db.inicializar_inventario(inventario_inicial)
 
         while True:
-            msg = comm.recv(source=MPI.ANY_SOURCE, tag=MPI.ANY_TAG)
+            # Recibir con un status para saber quién envió el mensaje
+            status = MPI.Status()
+            msg = comm.recv(source=MPI.ANY_SOURCE, tag=MPI.ANY_TAG, status=status)
+            source_rank = status.Get_source()
+
             if msg is None:
                 break
 
-            if msg["action"] == "REGISTRAR_PEDIDO":
+            action = msg.get("action", None)
+
+            if action == "REGISTRAR_PEDIDO":
                 data = msg["data"]
                 db.registrar_pedido(data["pedido_id"], data["items"], data["estado"])
 
-            elif msg["action"] == "ACTUALIZAR_INVENTARIO":
-                db.actualizar_inventario(msg["data"]["item"], msg["data"]["cantidad"])
+            elif action == "ACTUALIZAR_INVENTARIO":
+                item = msg["data"]["item"]
+                cant = msg["data"]["cantidad"]
+                db.actualizar_inventario(item, cant)
 
-            elif msg["action"] == "CONSULTAR_PEDIDOS":
+            elif action == "CONSULTAR_PEDIDOS":
                 pedidos_bd = db.consultar_pedidos()
-                comm.send(pedidos_bd, dest=0, tag=99)
+                # Responder a quien lo solicitó (generalmente rank=0)
+                comm.send(pedidos_bd, dest=source_rank, tag=99)
 
-            elif msg["action"] == "CONSULTAR_INVENTARIO":
+            elif action == "CONSULTAR_INVENTARIO":
                 inventario_bd = db.consultar_inventario()
-                comm.send(inventario_bd, dest=0, tag=23)
+                # Responder a quien lo pidió (rank=1 u otro)
+                comm.send(inventario_bd, dest=source_rank, tag=23)
 
         db.close()
 
