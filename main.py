@@ -5,7 +5,7 @@ from inventario import Inventario
 import random
 import json  # Por si quieres manipular (load/dump) el string JSON de items.
 
-def generar_pedidos(num_pedidos=5):
+def generar_pedidos(num_pedidos=100):
     """Genera una lista de objetos Pedido con ítems aleatorios."""
     items_posibles = ["pizza", "hamburguesa", "soda", "papas", "ensalada"]
     pedidos = []
@@ -28,7 +28,7 @@ def main():
         gestor = GestorPedidos()
 
         # Generar y distribuir pedidos
-        pedidos = generar_pedidos(num_pedidos=30)
+        pedidos = generar_pedidos(num_pedidos=100)
         print("\n=== [RANK 0] GENERANDO PEDIDOS ===\n")
         for pedido in pedidos:
             print(f"Pedido {pedido.pedido_id} con ítems: {pedido.items}")
@@ -132,11 +132,11 @@ def main():
         db.limpiar_tablas()
 
         inventario_inicial = {
-            "pizza": 50,
-            "hamburguesa": 40,
+            "pizza": 80,
+            "hamburguesa": 50,
             "soda": 60,
-            "papas": 30,
-            "ensalada": 25
+            "papas": 20,
+            "ensalada": 95
         }
         db.inicializar_inventario(inventario_inicial)
 
